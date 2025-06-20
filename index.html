@@ -210,14 +210,12 @@
 
         // --- 3D Scene ---
         const scene = new THREE.Scene();
-        scene.fog = new THREE.Fog(0x87CEEB, 1, 150);
         const camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
         camera.position.set(0, 6, 12);
         camera.rotation.x = -0.2;
         const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
         renderer.setSize(container.clientWidth, container.clientHeight);
         renderer.setPixelRatio(window.devicePixelRatio);
-        renderer.setClearColor(0x87CEEB);
         renderer.shadowMap.enabled = true;
         
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -229,6 +227,8 @@
 
         // --- Game Variables ---
         let score, gravity, player, ground, keys, fartSound, obstacles, obstacleTimer, nextObstacleTime, isGameActive, animationFrameId;
+        let currentLocationIndex, locationDecorations;
+        const locations = ['fields', 'city', 'space', 'underwater'];
 
         function initGameVariables() {
             score = 0;
@@ -239,10 +239,14 @@
             nextObstacleTime = 100;
             isGameActive = true;
             animationFrameId = null;
+            currentLocationIndex = -1; // Force initial setup
+            locationDecorations = [];
 
-            // Clear previous game objects from scene
             scene.children.forEach(child => {
-                 if (child.type === 'Mesh' && child !== ground) {
+                 if (child.isMesh && child !== ground) {
+                     scene.remove(child);
+                 }
+                 if (child.isPoints || child.isGroup) { // Remove old stars and trees
                      scene.remove(child);
                  }
             });
@@ -284,22 +288,100 @@
         scene.add(ground);
         
         // --- Controls ---
-        document.addEventListener('keydown', (e) => {
-            if (e.code === 'ArrowRight') keys.right = true;
-            if (e.code === 'ArrowLeft') keys.left = true;
-            if (e.code === 'Space') keys.space = true;
-        });
-        document.addEventListener('keyup', (e) => {
-            if (e.code === 'ArrowRight') keys.right = false;
-            if (e.code === 'ArrowLeft') keys.left = false;
-            if (e.code === 'Space') keys.space = false;
-        });
+        document.addEventListener('keydown', (e) => { if(!isGameActive) return; if (e.code === 'ArrowRight') keys.right = true; if (e.code === 'ArrowLeft') keys.left = true; if (e.code === 'Space') keys.space = true; });
+        document.addEventListener('keyup', (e) => { if (e.code === 'ArrowRight') keys.right = false; if (e.code === 'ArrowLeft') keys.left = false; if (e.code === 'Space') keys.space = false; });
         
         // --- Sound ---
         fartSound = new Tone.MembraneSynth({ pitchDecay: 0.1, octaves: 2, oscillator: { type: 'sine' }, envelope: { attack: 0.001, decay: 0.8, sustain: 0.01, release: 1.4, attackCurve: 'exponential' } }).toDestination();
         function playFartSound() {
             if (Tone.context.state !== 'running') { Tone.context.resume(); }
             fartSound.triggerAttackRelease('C1', '8n');
+        }
+        
+        // --- Location Setup ---
+        function setLocation(locationName) {
+            // Clear old decorations
+            locationDecorations.forEach(d => scene.remove(d));
+            locationDecorations = [];
+            ground.visible = true;
+
+            switch(locationName) {
+                case 'city':
+                    renderer.setClearColor(0x1a1a2e);
+                    scene.fog = new THREE.Fog(0x1a1a2e, 1, 120);
+                    ground.material.color.set(0x444444);
+                    const buildingMat = new THREE.MeshLambertMaterial({ color: 0x2a2a3e });
+                    for(let i = 0; i < 20; i++) {
+                        const height = Math.random() * 40 + 10;
+                        const building = new THREE.Mesh(new THREE.BoxGeometry(8, height, 8), buildingMat);
+                        building.position.set(Math.random() > 0.5 ? 20 : -20, height / 2, -i * 20);
+                        scene.add(building);
+                        locationDecorations.push(building);
+                    }
+                    break;
+                case 'space':
+                    renderer.setClearColor(0x000000);
+                    scene.fog = null;
+                    ground.visible = false;
+                    const starGeo = new THREE.BufferGeometry();
+                    const starVertices = [];
+                    for(let i=0; i<10000; i++) {
+                        starVertices.push(THREE.MathUtils.randFloatSpread(1000), THREE.MathUtils.randFloatSpread(1000), THREE.MathUtils.randFloatSpread(1000));
+                    }
+                    starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+                    const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({color: 0xffffff, size: 0.2}));
+                    scene.add(stars);
+                    locationDecorations.push(stars);
+                    break;
+                case 'underwater':
+                    renderer.setClearColor(0x003366);
+                    scene.fog = new THREE.Fog(0x003366, 1, 80);
+                    ground.material.color.set(0xc2b280); // Sand color
+                    const fishMat = new THREE.MeshLambertMaterial({ color: 0xffa500 });
+                    for(let i=0; i<30; i++) {
+                        const fish = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 8), fishMat);
+                        fish.position.set(THREE.MathUtils.randFloatSpread(50), THREE.MathUtils.randFloat(5, 20), THREE.MathUtils.randFloatSpread(300) * -1);
+                        fish.velocity = new THREE.Vector3(0, Math.random() * 0.02 - 0.01, 0);
+                        scene.add(fish);
+                        locationDecorations.push(fish);
+                    }
+                    break;
+                case 'fields':
+                default:
+                    renderer.setClearColor(0x87CEEB);
+                    scene.fog = new THREE.Fog(0x87CEEB, 1, 150);
+                    ground.material.color.set(0x228B22);
+                    // Add trees
+                    const treeTrunkMat = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
+                    const treeCrownMat = new THREE.MeshLambertMaterial({ color: 0x006400 });
+                    for(let i = 0; i < 30; i++) {
+                        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 4, 8), treeTrunkMat);
+                        const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(2, 0), treeCrownMat);
+                        crown.position.y = 4;
+                        const tree = new THREE.Group();
+                        tree.add(trunk);
+                        tree.add(crown);
+
+                        tree.position.set(
+                            THREE.MathUtils.randFloat(15, 25) * (Math.random() > 0.5 ? 1 : -1),
+                            2,
+                            -i * 15 + THREE.MathUtils.randFloat(-5, 5)
+                        );
+                        tree.children.forEach(c => c.castShadow = true);
+                        scene.add(tree);
+                        locationDecorations.push(tree);
+                    }
+                    break;
+            }
+        }
+        
+        function checkAndChangeLocation() {
+            const newIndex = Math.floor(score / 100);
+            if (newIndex !== currentLocationIndex) {
+                currentLocationIndex = newIndex;
+                const locationName = locations[currentLocationIndex % locations.length];
+                setLocation(locationName);
+            }
         }
 
         // --- Obstacles ---
@@ -312,19 +394,26 @@
             { type: 'pit', geometry: new THREE.BoxGeometry(4, 0.1, 4), material: new THREE.MeshLambertMaterial({ color: 0x000000 }) },
             { type: 'barrel', geometry: new THREE.CylinderGeometry(1.2, 1.2, 2.5, 12), material: new THREE.MeshLambertMaterial({ color: 0x32CD32 }) }
         ];
+        const spaceObstacleTypes = [
+             { type: 'asteroid', geometry: new THREE.IcosahedronGeometry(Math.random() * 1.5 + 0.5, 0), material: new THREE.MeshLambertMaterial({ color: 0xaaaaaa }) },
+             { type: 'spaceship', geometry: new THREE.ConeGeometry(1.5, 4, 8), material: new THREE.MeshLambertMaterial({ color: 0xff0000 }), rotationX: Math.PI / 2 }
+        ];
 
         function createObstacles() {
+            const locationName = locations[currentLocationIndex % locations.length];
+            const types = locationName === 'space' ? spaceObstacleTypes : obstacleTypes;
+
             const numberOfObstacles = (score > 15 && Math.random() > 0.5) ? 2 : 1;
             const usedLanes = [];
             for (let i = 0; i < numberOfObstacles; i++) {
-                const type = obstacleTypes[Math.floor(Math.random() * obstacleTypes.length)];
-                const obstacle = new THREE.Mesh(type.geometry, type.material);
+                const type = types[Math.floor(Math.random() * types.length)];
+                const obstacle = new THREE.Mesh(type.geometry.clone(), type.material.clone()); 
                 let laneIndex;
                 do { laneIndex = Math.floor(Math.random() * obstacleLanePositions.length); } while(usedLanes.includes(laneIndex));
                 usedLanes.push(laneIndex);
                 obstacle.position.z = -150;
                 obstacle.position.x = obstacleLanePositions[laneIndex];
-                obstacle.position.y = (type.geometry.parameters.height || 2) / 2;
+                obstacle.position.y = (locationName === 'space') ? Math.random() * 5 + 1 : (type.geometry.parameters.height || 2) / 2;
                 if (type.rotationX) { obstacle.rotation.x = type.rotationX; obstacle.rotation.z = Math.PI / 2; }
                 obstacle.castShadow = true;
                 obstacle.scored = false;
@@ -351,12 +440,17 @@
             scene.add(player);
             endGameModal.style.display = 'none';
             isGameActive = true;
+            checkAndChangeLocation();
             animate();
         }
 
+        const clock = new THREE.Clock();
         function animate() {
             if (!isGameActive) return;
             animationFrameId = requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            checkAndChangeLocation();
 
             if (keys.right && player.position.x < 10) player.position.x += 0.25;
             if (keys.left && player.position.x > -10) player.position.x -= 0.25;
@@ -390,20 +484,27 @@
                 if (!o.scored && o.position.z > player.position.z) {
                     score++;
                     o.scored = true;
+                    scoreBoard.textContent = `Score: ${score}`;
                 }
                 const obstacleBox = new THREE.Box3().setFromObject(o);
                 if (playerBox.intersectsBox(obstacleBox)) {
                     scene.remove(o);
                     obstacles.splice(i, 1);
                     score = Math.max(0, score - 1);
+                    scoreBoard.textContent = `Score: ${score}`;
                 }
                 if (o.position.z > camera.position.z) {
                     scene.remove(o);
                     obstacles.splice(i, 1);
                 }
             }
+            
+            locationDecorations.forEach(deco => {
+                if (deco.velocity) { // It's a fish!
+                    deco.position.y += Math.sin(clock.elapsedTime * 2 + deco.position.x) * 0.01;
+                }
+            });
 
-            scoreBoard.textContent = `Score: ${score}`;
             renderer.render(scene, camera);
         }
 
@@ -414,27 +515,14 @@
         saveScoreForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const playerName = playerNameInput.value.trim();
-            if (!playerName) {
-                alert("Please enter a name!");
-                return;
-            }
-            if(!db) {
-                console.error("Firestore is not initialized.");
-                return;
-            }
-
+            if (!playerName) { alert("Please enter a name!"); return; }
+            if(!db) { console.error("Firestore is not initialized."); return; }
             try {
                 const leaderboardCollection = collection(db, `/artifacts/${appId}/public/data/leaderboard`);
-                await addDoc(leaderboardCollection, {
-                    name: playerName,
-                    score: score
-                });
-                console.log("Score saved for", playerName);
+                await addDoc(leaderboardCollection, { name: playerName, score: score });
                 saveScoreForm.style.display = 'none';
                 restartBtn.style.display = 'inline-block';
-            } catch (error) {
-                console.error("Error saving score: ", error);
-            }
+            } catch (error) { console.error("Error saving score: ", error); }
         });
 
         window.addEventListener('resize', () => {
@@ -445,39 +533,17 @@
         
         // --- Leaderboard ---
         function fetchAndDisplayLeaderboard() {
-            if(!db) {
-                console.error("Firestore is not available for leaderboard.");
-                leaderboardList.innerHTML = "<li>Could not load scores.</li>";
-                return;
-            }
-            const leaderboardCollection = collection(db, `/artifacts/${appId}/public/data/leaderboard`);
-            const q = query(leaderboardCollection);
-
+            if(!db) { leaderboardList.innerHTML = "<li>Could not load scores.</li>"; return; }
+            const q = query(collection(db, `/artifacts/${appId}/public/data/leaderboard`));
             onSnapshot(q, (snapshot) => {
                 const scores = [];
-                snapshot.forEach((doc) => {
-                    scores.push(doc.data());
-                });
-
-                // Sort by score descending and take top 10
+                snapshot.forEach((doc) => { scores.push(doc.data()); });
                 scores.sort((a, b) => b.score - a.score);
                 const top10 = scores.slice(0, 10);
-                
-                // Display
                 leaderboardList.innerHTML = '';
-                if (top10.length === 0) {
-                     leaderboardList.innerHTML = '<li>No scores yet. Be the first!</li>';
-                } else {
-                    top10.forEach(entry => {
-                        const li = document.createElement('li');
-                        li.textContent = `${entry.name}: ${entry.score}`;
-                        leaderboardList.appendChild(li);
-                    });
-                }
-            }, (error) => {
-                console.error("Error fetching leaderboard: ", error);
-                leaderboardList.innerHTML = "<li>Error loading scores.</li>";
-            });
+                if (top10.length === 0) { leaderboardList.innerHTML = '<li>No scores yet. Be the first!</li>'; } 
+                else { top10.forEach(entry => { const li = document.createElement('li'); li.textContent = `${entry.name}: ${entry.score}`; leaderboardList.appendChild(li); }); }
+            }, (error) => { console.error("Error fetching leaderboard: ", error); leaderboardList.innerHTML = "<li>Error loading scores.</li>"; });
         }
         
         // --- Start Game ---
