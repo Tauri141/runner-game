@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Runner Game</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #111;
+            font-family: 'Press Start 2P', cursive;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        #container {
+            position: relative;
+            width: 100%;
+            max-width: 1000px;
+            height: 100%;
+            max-height: 600px;
+            border-radius: 10px;
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.5);
+            border: 4px solid cyan;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            border-radius: 6px;
+        }
+        #ui-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            padding: 20px;
+            box-sizing: border-box;
+            color: white;
+            text-shadow: 2px 2px #000;
+            pointer-events: none;
+        }
+        #score-board {
+            font-size: 24px;
+        }
+        #controls-info {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 14px;
+            text-align: center;
+            color: #ccc;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="container">
+        <div id="ui-container">
+            <div id="score-board">Score: 0</div>
+        </div>
+        <canvas id="gameCanvas"></canvas>
+        <div id="controls-info">
+            Space - Jump<br>
+            ← → - Move Left/Right
+        </div>
+    </div>
+
+    <script>
+        // --- Basic Setup ---
+        const canvas = document.getElementById('gameCanvas');
+        const container = document.getElementById('container');
+        const scoreBoard = document.getElementById('score-board');
+        
+        // --- 3D Scene Setup ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.Fog(0x87CEEB, 1, 150);
+
+        const camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
+        camera.position.set(0, 6, 12);
+        camera.rotation.x = -0.2;
+
+        const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setClearColor(0x87CEEB); // Sky blue background
+        renderer.shadowMap.enabled = true;
+
+        // --- Lighting ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(-10, 20, 10);
+        directionalLight.castShadow = true;
+        scene.add(directionalLight);
+
+        // --- Game Variables ---
+        let score = 0;
+        const gravity = 0.08;
+        
+        // --- Player with Text ---
+        function createPlayer() {
+            // Create a canvas to draw the text
+            const textCanvas = document.createElement('canvas');
+            const context = textCanvas.getContext('2d');
+            textCanvas.width = 256;
+            textCanvas.height = 256;
+
+            // Draw the background color
+            context.fillStyle = '#0077FF';
+            context.fillRect(0, 0, textCanvas.width, textCanvas.height);
+            
+            // Draw the text
+            context.font = 'bold 70px Arial';
+            context.fillStyle = 'white';
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+            context.fillText('VR360', textCanvas.width / 2, textCanvas.height / 2);
+
+            const texture = new THREE.CanvasTexture(textCanvas);
+            const playerGeometry = new THREE.BoxGeometry(2, 2, 2);
+            
+            // Create different materials for the faces of the cube
+            const materials = [
+                new THREE.MeshLambertMaterial({ color: 0x0077FF }), // right side
+                new THREE.MeshLambertMaterial({ color: 0x0077FF }), // left side
+                new THREE.MeshLambertMaterial({ color: 0x0077FF }), // top side
+                new THREE.MeshLambertMaterial({ color: 0x0077FF }), // bottom side
+                new THREE.MeshLambertMaterial({ map: texture }),    // front side with text
+                new THREE.MeshLambertMaterial({ color: 0x0077FF }), // back side
+            ];
+
+            const playerMesh = new THREE.Mesh(playerGeometry, materials);
+            playerMesh.position.y = 1;
+            playerMesh.castShadow = true;
+            playerMesh.velocityY = 0;
+            playerMesh.isJumping = false;
+            return playerMesh;
+        }
+        const player = createPlayer();
+        scene.add(player);
+
+
+        // --- Ground ---
+        const groundGeometry = new THREE.PlaneGeometry(80, 400);
+        const groundMaterial = new THREE.MeshLambertMaterial({ color: 0x228B22 });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // --- Controls ---
+        const keys = { right: false, left: false, space: false };
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'ArrowRight') keys.right = true;
+            if (e.code === 'ArrowLeft') keys.left = true;
+            if (e.code === 'Space') keys.space = true;
+        });
+        document.addEventListener('keyup', (e) => {
+            if (e.code === 'ArrowRight') keys.right = false;
+            if (e.code === 'ArrowLeft') keys.left = false;
+            if (e.code === 'Space') keys.space = false;
+        });
+
+        // --- Fart Sound ---
+        const fartSound = new Tone.MembraneSynth({ pitchDecay: 0.1, octaves: 2, oscillator: { type: 'sine' }, envelope: { attack: 0.001, decay: 0.8, sustain: 0.01, release: 1.4, attackCurve: 'exponential' } }).toDestination();
+        function playFartSound() {
+            if (Tone.context.state !== 'running') { Tone.context.resume(); }
+            fartSound.triggerAttackRelease('C1', '8n');
+        }
+
+        // --- Obstacles ---
+        let obstacles = [];
+        let obstacleTimer = 0;
+        let nextObstacleTime = 100;
+        const obstacleLanePositions = [-5, 0, 5]; // 3 lanes for obstacles
+
+        const obstacleTypes = [
+            { type: 'rock', geometry: new THREE.IcosahedronGeometry(1.5, 0), material: new THREE.MeshLambertMaterial({ color: 0x808080 }) },
+            { type: 'log', geometry: new THREE.CylinderGeometry(1, 1, 6, 8), material: new THREE.MeshLambertMaterial({ color: 0x8B4513 }), rotationX: Math.PI / 2 },
+            { type: 'corpse', geometry: new THREE.BoxGeometry(4, 0.5, 2), material: new THREE.MeshLambertMaterial({ color: 0xA52A2A }) },
+            { type: 'poop', geometry: new THREE.ConeGeometry(1, 1.5, 8), material: new THREE.MeshLambertMaterial({ color: 0x654321 }) },
+            { type: 'pit', geometry: new THREE.BoxGeometry(4, 0.1, 4), material: new THREE.MeshLambertMaterial({ color: 0x000000 }) },
+            { type: 'barrel', geometry: new THREE.CylinderGeometry(1.2, 1.2, 2.5, 12), material: new THREE.MeshLambertMaterial({ color: 0x32CD32 }) }
+        ];
+
+        function createObstacles() {
+            const numberOfObstacles = (score > 15 && Math.random() > 0.5) ? 2 : 1;
+            const usedLanes = [];
+
+            for (let i = 0; i < numberOfObstacles; i++) {
+                const type = obstacleTypes[Math.floor(Math.random() * obstacleTypes.length)];
+                const obstacle = new THREE.Mesh(type.geometry, type.material);
+                
+                let laneIndex;
+                do {
+                    laneIndex = Math.floor(Math.random() * obstacleLanePositions.length);
+                } while(usedLanes.includes(laneIndex));
+                usedLanes.push(laneIndex);
+                
+                obstacle.position.z = -150;
+                obstacle.position.x = obstacleLanePositions[laneIndex];
+                obstacle.position.y = (type.geometry.parameters.height || 2) / 2;
+                
+                if (type.rotationX) {
+                    obstacle.rotation.x = type.rotationX;
+                    obstacle.rotation.z = Math.PI / 2;
+                }
+
+                obstacle.castShadow = true;
+                obstacle.scored = false;
+                // Increased speed
+                obstacle.speed = 1.0 + (score / 40);
+                
+                scene.add(obstacle);
+                obstacles.push(obstacle);
+            }
+            // Faster spawning
+            nextObstacleTime = Math.max(35, 90 - score);
+        }
+
+        // --- Game Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Player movement
+            if (keys.right && player.position.x < 10) player.position.x += 0.25;
+            if (keys.left && player.position.x > -10) player.position.x -= 0.25;
+
+            // Player jump
+            if (keys.space && !player.isJumping) {
+                player.isJumping = true;
+                player.velocityY = 1.8;
+                playFartSound();
+            }
+
+            // Player physics
+            if (player.isJumping) {
+                player.velocityY -= gravity;
+                player.position.y += player.velocityY;
+                if (player.position.y <= 1) {
+                    player.position.y = 1;
+                    player.velocityY = 0;
+                    player.isJumping = false;
+                }
+            }
+            
+            // Obstacle handling
+            obstacleTimer++;
+            if (obstacleTimer > nextObstacleTime) {
+                createObstacles();
+                obstacleTimer = 0;
+            }
+
+            const playerBox = new THREE.Box3().setFromObject(player);
+
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                const o = obstacles[i];
+                o.position.z += o.speed;
+
+                if (!o.scored && o.position.z > player.position.z) {
+                    score++;
+                    o.scored = true;
+                }
+
+                const obstacleBox = new THREE.Box3().setFromObject(o);
+                if (playerBox.intersectsBox(obstacleBox)) {
+                    scene.remove(o);
+                    obstacles.splice(i, 1);
+                    score = Math.max(0, score - 1);
+                }
+                
+                if (o.position.z > camera.position.z) {
+                    scene.remove(o);
+                    obstacles.splice(i, 1);
+                }
+            }
+
+            scoreBoard.textContent = `Score: ${score}`;
+            renderer.render(scene, camera);
+        }
+        
+        window.addEventListener('resize', () => {
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }, false);
+        
+        animate();
+    </script>
+</body>
+</html>
